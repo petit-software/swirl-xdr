@@ -1,94 +1,60 @@
-# SwirlSaver
+# Swirl XDR
 
-A macOS screen saver that renders one unified Metal effect: the Apple Pro Display
-XDR **neon swirl** seen *through* a **liquid-glass lens**. The swirl (flowing
-neon liquid-marble ribbons on black) is the scene; a glass surface — a Fresnel
-bulge plus animated Simplex-noise ripples (ported from paper.design's
-`liquidGlass.metal`) — lenses and chromatically refracts it, with a specular rim
-and film grain on top.
+A calm, hypnotic screen saver for macOS — a flowing liquid-chrome swirl seen
+through rippling glass, with a whisper of rainbow along the edges.
 
-![thumbnail](SwirlSaver/thumbnail.png)
+![preview](SwirlXDR/thumbnail.png)
 
-## How the effect works
+## Install
 
-Everything is produced by one screen-space fragment function, `swirl_color()` in
-[`SwirlSaver/SwirlCore.metal`](SwirlSaver/SwirlCore.metal):
+1. Download **Swirl-XDR.saver.zip** from the
+   [latest release](https://github.com/petit-software/swirl-xdr/releases/latest)
+   and unzip it.
+2. Double-click **Swirl XDR.saver** and choose to install it.
+3. Open **System Settings → Screen Saver** and pick **Swirl XDR**.
 
-1. **Domain-warped fBm** — nested fractal noise (`fbm(p + warp*fbm(p + warp*fbm(p)))`)
-   creates the big, smooth, taffy-pulled marble flow. Animating the inner warp with
-   time makes it move like liquid.
-2. **Iso-contour bands** — sharp, widely-spaced bands of the field become the thin
-   parallel ribbons; wide black gaps fall out for free where the field is calm.
-3. **Per-channel chromatic offset + cosine palette** — offsetting R/G/B along the
-   field gives the oil-slick rainbow fringing; an IQ cosine palette supplies the
-   electric blue / cyan / magenta / orange neon.
-4. **Specular crest** — the brightest core of each ribbon blooms toward white.
+> First time only: because it isn't from the App Store, macOS may ask you to
+> confirm. If it's blocked, go to **System Settings → Privacy & Security** and
+> click **Open Anyway**, then try again.
 
-It is a single full-screen triangle — no multi-pass pipeline, no textures.
+## Make it yours
 
-## Build & install
+In **System Settings → Screen Saver → Swirl XDR**, click **Options…**:
 
-```sh
-xcodebuild -project SwirlSaver.xcodeproj -scheme SwirlSaver -configuration Release build
-./install.sh          # copies the .saver into ~/Library/Screen Savers and resets the host
-```
+- **Speed** — how fast it moves
+- **Detail** — busy and intricate, or big and calm
 
-Then open **System Settings → Screen Saver → SwirlSaver**. Use **Options…** to tune:
+## Want more control?
 
-- **Speed** — animation rate (drives both the swirl flow and the glass ripple)
-- **Detail** — swirl ribbon density
+There's a companion app for playing with the look in real time — colors,
+brightness, glassiness, grain and more — all on a fullscreen live preview.
+Drag the sliders and watch it change; press **Esc** to exit. Press **S** to save
+a high-resolution screenshot to your Desktop.
 
-The swirl palette (the 8 reference neons) and the glass parameters (refraction,
-ripple/liquid amount, grain, etc.) are baked to their defaults in `SwirlUniforms`
-/ `LiquidUniforms`, easy to expose as extra sliders later. The combined shader is
-`combined_fragment` / `combined_color` in `SwirlCore.metal`; `swirl_fragment` and
-`liquid_fragment` remain in the file if you ever want either effect on its own.
-
-## Live tuning — the SwirlLive companion app
-
-A real macOS screensaver **can't** show interactive controls: the system's
-`legacyScreenSaver` host quits the saver on the first mouse/key event. So live
-tuning lives in a companion app instead:
+Build and launch it with:
 
 ```sh
-./build-live.sh        # builds build/SwirlLive.app and launches it fullscreen
+./build-live.sh
 ```
 
-`SwirlLive.app` runs the exact same `SwirlRenderer` + `SwirlCore.metal`
-fullscreen with an overlay panel of sliders for **every** parameter (Speed,
-Detail, Saturation, Brightness, Chroma, Glass bend, Ripple, Wave size, Grain).
-Because it's an ordinary app, nothing disappears while you drag. **Esc (or ⌘Q)
-exits** — nothing else does.
+Anything you set there becomes the screen saver's look too.
 
-Every change is written to the shared `ScreenSaverDefaults`, and the real
-screensaver reads all of those keys, so whatever you dial in here is exactly
-what the screensaver shows. (The screensaver's own **Options** sheet still just
-exposes Speed + Detail for quick tweaks; the app is the full mixing board.)
+---
 
-Note: `Saturation` goes from 0 (the monochrome liquid-chrome look) up to 1 (full
-neon), so the app can take you all the way back to the colorful original.
+<details>
+<summary>For developers</summary>
 
-## Tuning the look offline (no bundle rebuild)
+Built in Swift + Metal. One fragment shader (`SwirlXDR/SwirlCore.metal`) does
+everything: a domain-warped noise "swirl" refracted through an animated
+liquid-glass lens (`combined_fragment`).
 
-`preview/preview.swift` runtime-compiles the exact same `SwirlCore.metal` as a
-compute kernel and writes PNG stills, so you can iterate on the shader without
-building the screensaver:
+- `./install.sh` — build the `.saver` and install it to `~/Library/Screen Savers`
+- `./build-live.sh` — build & run the `SwirlLive` tuning app
+- `./reset-host.sh` — restart the screen-saver host if a preview gets stuck
+- `preview/*.swift` — render stills offline for fast shader iteration
 
-```sh
-swift preview/preview.swift SwirlSaver/SwirlCore.metal /tmp/out 1600 900 0.0 6.0
-```
+Settings are shared between the saver and the app via `ScreenSaverDefaults`
+(module `com.bartbak.SwirlSaver`). The glass lens is ported from paper.design's
+`liquidGlass.metal`.
 
-The fragment shader and the preview kernel both call `swirl_color()`, so a still
-matches exactly what the saver renders.
-
-## Notes on modern macOS screensavers
-
-Third-party savers run in the out-of-process `legacyScreenSaver` host, which does
-not reliably tear savers down. `SwirlSaverView` handles this the hard-won way:
-self-driving `MTKView` (own display link), `exit(0)` on stop/sleep, a fresh
-config sheet per open, and loading the metallib from *this* bundle
-(`makeDefaultLibrary(bundle:)`) rather than the host's. See the comments in
-[`SwirlSaverView.swift`](SwirlSaver/SwirlSaverView.swift).
-
-Credit: the bundle wiring / lifecycle approach follows the sibling
-`liquid-glass-screensaver` project.
+</details>
