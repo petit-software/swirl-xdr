@@ -1,0 +1,8 @@
+build/
+DerivedData/
+*.dSYM
+.DS_Store
+xcuserdata/
+
+build/
+SwirlLive.app/
