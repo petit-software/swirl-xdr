@@ -9,6 +9,7 @@
 //
 
 import MetalKit
+import CoreGraphics
 
 /// Must match `SwirlUniforms` in SwirlCore.metal exactly (field order + types).
 struct SwirlUniforms {
@@ -56,7 +57,8 @@ final class SwirlRenderer: NSObject, MTKViewDelegate {
 
     private let device: MTLDevice
     private let queue: MTLCommandQueue
-    private let pipeline: MTLRenderPipelineState
+    private let pipeline: MTLRenderPipelineState        // for the on-screen MTKView
+    private let snapshotPipeline: MTLRenderPipelineState? // rgba8Unorm for offscreen capture
 
     private let startDate = Date()
 
@@ -99,8 +101,69 @@ final class SwirlRenderer: NSObject, MTKViewDelegate {
         guard let pipeline = try? device.makeRenderPipelineState(descriptor: desc) else { return nil }
         self.pipeline = pipeline
 
+        // A parallel pipeline targeting an rgba8Unorm offscreen texture, for
+        // high-res snapshots.
+        let sdesc = MTLRenderPipelineDescriptor()
+        sdesc.vertexFunction = vfn
+        sdesc.fragmentFunction = ffn
+        sdesc.colorAttachments[0].pixelFormat = .rgba8Unorm
+        self.snapshotPipeline = try? device.makeRenderPipelineState(descriptor: sdesc)
+
         super.init()
         metalView.delegate = self
+    }
+
+    /// Builds both uniform buffers for a given target size + time. Shared by the
+    /// live draw and the offscreen snapshot so they render identically.
+    private func makeUniforms(width: Float, height: Float, time: Float) -> (SwirlUniforms, LiquidUniforms) {
+        var su = SwirlUniforms()
+        su.resX = width; su.resY = height; su.time = time
+        su.speed = speed; su.density = density; su.saturation = saturation
+        su.brightness = brightness; su.chroma = chroma; su.hueShift = hueShift
+        su.lineDensity = max(1.0, density * 3.57)
+
+        var lu = LiquidUniforms()
+        lu.size = SIMD2<Float>(width, height); lu.time = time
+        lu.speed = 0.05 + 0.16 * speed
+        lu.refraction = glassBend; lu.liquid = ripple; lu.waveSize = waveSize; lu.grainIntensity = grain
+        return (su, lu)
+    }
+
+    /// Render the current frame to an offscreen texture at an arbitrary size and
+    /// return it as a CGImage (used for high-res screenshots).
+    func snapshot(width: Int, height: Int) -> CGImage? {
+        guard width > 0, height > 0, let snapshotPipeline else { return nil }
+        let td = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba8Unorm,
+                                                          width: width, height: height, mipmapped: false)
+        td.usage = [.renderTarget, .shaderRead]
+        td.storageMode = .shared
+        guard let tex = device.makeTexture(descriptor: td) else { return nil }
+
+        let rpd = MTLRenderPassDescriptor()
+        rpd.colorAttachments[0].texture = tex
+        rpd.colorAttachments[0].loadAction = .clear
+        rpd.colorAttachments[0].storeAction = .store
+        rpd.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 1)
+
+        var (su, lu) = makeUniforms(width: Float(width), height: Float(height),
+                                    time: Float(Date().timeIntervalSince(startDate)))
+        guard let cb = queue.makeCommandBuffer(),
+              let enc = cb.makeRenderCommandEncoder(descriptor: rpd) else { return nil }
+        enc.setRenderPipelineState(snapshotPipeline)
+        enc.setFragmentBytes(&su, length: MemoryLayout<SwirlUniforms>.stride, index: 0)
+        enc.setFragmentBytes(&lu, length: MemoryLayout<LiquidUniforms>.stride, index: 1)
+        enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+        enc.endEncoding()
+        cb.commit(); cb.waitUntilCompleted()
+
+        let bpr = width * 4
+        var raw = [UInt8](repeating: 0, count: bpr * height)
+        tex.getBytes(&raw, bytesPerRow: bpr, from: MTLRegionMake2D(0, 0, width, height), mipmapLevel: 0)
+        let cs = CGColorSpace(name: CGColorSpace.sRGB)!
+        guard let ctx = CGContext(data: &raw, width: width, height: height, bitsPerComponent: 8,
+                                  bytesPerRow: bpr, space: cs,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        return ctx.makeImage()
     }
 
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
@@ -126,31 +189,7 @@ final class SwirlRenderer: NSObject, MTKViewDelegate {
 
         let size = view.drawableSize
         let now = Float(Date().timeIntervalSince(startDate))
-
-        // Buffer 0: the swirl scene.
-        var su = SwirlUniforms()
-        su.resX = Float(size.width)
-        su.resY = Float(size.height)
-        su.time = now
-        su.speed = speed
-        su.density = density
-        su.saturation = saturation
-        su.brightness = brightness
-        su.chroma = chroma
-        su.hueShift = hueShift
-        // Fewer bands at lower Detail (not just bigger features), so the slider
-        // really thins out the number of ribbons. ~5.0 at the default density 1.4.
-        su.lineDensity = max(1.0, density * 3.57)
-
-        // Buffer 1: the glass lens. Speed also drives the glass ripple.
-        var lu = LiquidUniforms()
-        lu.size = SIMD2<Float>(Float(size.width), Float(size.height))
-        lu.time = now
-        lu.speed = 0.05 + 0.16 * speed   // ~0.24 at speed 1.2
-        lu.refraction = glassBend
-        lu.liquid = ripple
-        lu.waveSize = waveSize
-        lu.grainIntensity = grain
+        var (su, lu) = makeUniforms(width: Float(size.width), height: Float(size.height), time: now)
 
         enc.setRenderPipelineState(pipeline)
         enc.setFragmentBytes(&su, length: MemoryLayout<SwirlUniforms>.stride, index: 0)

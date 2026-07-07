@@ -15,6 +15,8 @@
 import AppKit
 import MetalKit
 import ScreenSaver
+import ImageIO
+import UniformTypeIdentifiers
 
 // A borderless window that can still become key (so sliders are interactive).
 final class KeyableWindow: NSWindow {
@@ -34,6 +36,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     var mtkView: MTKView!
     var renderer: SwirlRenderer!
     var targets: [ActionTarget] = []          // retain slider targets
+    var titleLabel: NSTextField?              // for transient status messages
     let defaults = SwirlSaverView.saverDefaults
 
     struct Ctl {
@@ -59,7 +62,10 @@ final class AppController: NSObject, NSApplicationDelegate {
 
         window = KeyableWindow(contentRect: screen.frame, styleMask: [.borderless],
                                backing: .buffered, defer: false)
-        window.level = .screenSaver
+        // .normal (not .screenSaver): a screensaver-level window sits above the
+        // menu bar and swallows system hotkeys like ⌘Space. Normal level still
+        // fills the screen while the app is active, but lets the system through.
+        window.level = .normal
         window.backgroundColor = .black
         window.isOpaque = true
         window.setFrame(screen.frame, display: true)
@@ -87,13 +93,49 @@ final class AppController: NSObject, NSApplicationDelegate {
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
 
-        // Escape / ⌘Q to quit; nothing else exits.
-        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { e in
+        // Escape / ⌘Q to quit; S saves a 2× screenshot; nothing else exits.
+        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] e in
             if e.keyCode == 53 { NSApp.terminate(nil); return nil }          // esc
             if e.charactersIgnoringModifiers == "q", e.modifierFlags.contains(.command) {
                 NSApp.terminate(nil); return nil
             }
+            if e.charactersIgnoringModifiers?.lowercased() == "s" {          // screenshot
+                self?.takeScreenshot(); return nil
+            }
             return e
+        }
+    }
+
+    /// Render at 2× the current drawable size and save a PNG to the Desktop.
+    private func takeScreenshot() {
+        let w = Int((mtkView.drawableSize.width * 2).rounded())
+        let h = Int((mtkView.drawableSize.height * 2).rounded())
+        guard w > 0, h > 0, let img = renderer.snapshot(width: w, height: h) else {
+            flash("Screenshot failed"); return
+        }
+        let fmt = DateFormatter()
+        fmt.dateFormat = "yyyy-MM-dd 'at' HH.mm.ss"
+        let name = "Swirl XDR \(fmt.string(from: Date())).png"
+        guard let desktop = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first else {
+            flash("No Desktop found"); return
+        }
+        let url = desktop.appendingPathComponent(name)
+        guard let dest = CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil) else {
+            flash("Screenshot failed"); return
+        }
+        CGImageDestinationAddImage(dest, img, nil)
+        if CGImageDestinationFinalize(dest) {
+            flash("📸 Saved to Desktop (\(w)×\(h))")
+        } else {
+            flash("Screenshot failed")
+        }
+    }
+
+    /// Briefly show a message in the panel title, then restore it.
+    private func flash(_ message: String) {
+        titleLabel?.stringValue = message
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { [weak self] in
+            self?.titleLabel?.stringValue = "Swirl XDR — Live"
         }
     }
 
@@ -130,8 +172,9 @@ final class AppController: NSObject, NSApplicationDelegate {
         title.textColor = .white
         title.frame = NSRect(x: pad, y: height - 30, width: width - 2 * pad, height: 20)
         panel.addSubview(title)
+        titleLabel = title
 
-        let hint = NSTextField(labelWithString: "Drag to tune · saves to the screensaver · Esc to exit")
+        let hint = NSTextField(labelWithString: "Drag to tune · S = 2× screenshot · Esc to exit")
         hint.font = .systemFont(ofSize: 10)
         hint.textColor = .secondaryLabelColor
         hint.frame = NSRect(x: pad, y: height - 48, width: width - 2 * pad, height: 14)
