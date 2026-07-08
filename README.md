@@ -3,7 +3,8 @@
 A calm, hypnotic screen saver for macOS — a flowing liquid-chrome swirl seen
 through rippling glass, with a whisper of rainbow along the edges.
 
-![preview](SwirlXDR/thumbnail.png)
+<img width="3020" height="2124" alt="CleanShot 2026-07-08 at 12  16 11@2x" src="https://github.com/user-attachments/assets/87f637f1-816d-4755-a2b3-b8319d578147" />
+
 
 ## Install
 
