@@ -2,11 +2,12 @@
 //  main.swift
 //  SwirlLive — companion app for live-tuning the SwirlSaver effect.
 //
-//  Runs the SAME SwirlRenderer + SwirlCore.metal fullscreen, with an overlay
-//  control panel. Because this is an ordinary app (not the screensaver host),
-//  it does NOT quit on mouse/keyboard — you can drag the sliders freely. Only
-//  Escape (or ⌘Q) exits. Every change is written to the shared ScreenSaverDefaults
-//  so the real screensaver reflects your tuning.
+//  Runs the SAME SwirlRenderer + SwirlCore.metal in a regular movable/resizable
+//  window, with an overlay control panel. Because this is an ordinary app (not
+//  the screensaver host), it does NOT quit on mouse/keyboard — you can drag the
+//  sliders freely. Escape (or ⌘Q) exits; the green button goes fullscreen.
+//  Every change is written to the shared ScreenSaverDefaults so the real
+//  screensaver reflects your tuning.
 //
 //  SwirlRenderer.swift is compiled into this app (see build-live.sh), and the
 //  metallib is bundled in Resources, so the visuals match the saver exactly.
@@ -18,12 +19,6 @@ import ScreenSaver
 import ImageIO
 import UniformTypeIdentifiers
 
-// A borderless window that can still become key (so sliders are interactive).
-final class KeyableWindow: NSWindow {
-    override var canBecomeKey: Bool { true }
-    override var canBecomeMain: Bool { true }
-}
-
 // Wraps a closure as an @objc target/action for controls.
 final class ActionTarget: NSObject {
     let cb: (Double) -> Void
@@ -32,10 +27,12 @@ final class ActionTarget: NSObject {
 }
 
 final class AppController: NSObject, NSApplicationDelegate {
-    var window: KeyableWindow!
+    var window: NSWindow!
     var mtkView: MTKView!
     var renderer: SwirlRenderer!
     var targets: [ActionTarget] = []          // retain slider targets
+    var sliders: [String: NSSlider] = [:]     // by settings key, for re-sync
+    var panel: NSView?                        // control panel, toggled with H
     var titleLabel: NSTextField?              // for transient status messages
     let defaults = SwirlSaverView.saverDefaults
 
@@ -58,19 +55,18 @@ final class AppController: NSObject, NSApplicationDelegate {
     ]
 
     func applicationDidFinishLaunching(_ note: Notification) {
-        let screen = NSScreen.main ?? NSScreen.screens[0]
-
-        window = KeyableWindow(contentRect: screen.frame, styleMask: [.borderless],
-                               backing: .buffered, defer: false)
-        // .normal (not .screenSaver): a screensaver-level window sits above the
-        // menu bar and swallows system hotkeys like ⌘Space. Normal level still
-        // fills the screen while the app is active, but lets the system through.
-        window.level = .normal
+        let initial = NSRect(x: 0, y: 0, width: 1280, height: 800)
+        window = NSWindow(contentRect: initial,
+                          styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                          backing: .buffered, defer: false)
+        window.title = "Swirl XDR — Live"
+        window.minSize = NSSize(width: 640, height: 400)
+        window.collectionBehavior = [.fullScreenPrimary]
         window.backgroundColor = .black
         window.isOpaque = true
-        window.setFrame(screen.frame, display: true)
+        window.center()
 
-        let content = NSView(frame: screen.frame)
+        let content = NSView(frame: initial)
         window.contentView = content
 
         // Metal view (fills the window)
@@ -87,13 +83,24 @@ final class AppController: NSObject, NSApplicationDelegate {
         applyStoredToRenderer()
         content.addSubview(mtkView)
 
-        content.addSubview(makePanel())
+        let p = makePanel()
+        panel = p
+        content.addSubview(p)
 
         NSApp.setActivationPolicy(.regular)
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
 
-        // Escape / ⌘Q to quit; S saves a 2× screenshot; nothing else exits.
+        // Pick up tuning done elsewhere (e.g. the saver's Options sheet) whenever
+        // the app comes back to the front.
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.applyStoredToRenderer()
+            self?.syncSlidersFromDefaults()
+        }
+
+        // Escape / ⌘Q to quit; S saves a 2× screenshot; H toggles the panel.
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] e in
             if e.keyCode == 53 { NSApp.terminate(nil); return nil }          // esc
             if e.charactersIgnoringModifiers == "q", e.modifierFlags.contains(.command) {
@@ -101,6 +108,10 @@ final class AppController: NSObject, NSApplicationDelegate {
             }
             if e.charactersIgnoringModifiers?.lowercased() == "s" {          // screenshot
                 self?.takeScreenshot(); return nil
+            }
+            if e.charactersIgnoringModifiers?.lowercased() == "h" {          // hide/show panel
+                if let p = self?.panel { p.isHidden.toggle() }
+                return nil
             }
             return e
         }
@@ -139,6 +150,15 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
     }
 
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+
+    private func syncSlidersFromDefaults() {
+        guard let d = defaults else { return }
+        for c in controls {
+            sliders[c.key]?.doubleValue = Double(d.float(forKey: c.key))
+        }
+    }
+
     private func applyStoredToRenderer() {
         guard let d = defaults else { return }
         renderer.speed = d.float(forKey: SwirlSaverView.Key.speed)
@@ -174,7 +194,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         panel.addSubview(title)
         titleLabel = title
 
-        let hint = NSTextField(labelWithString: "Drag to tune · S = 2× screenshot · Esc to exit")
+        let hint = NSTextField(labelWithString: "H hide panel · S = 2× screenshot · Esc to exit")
         hint.font = .systemFont(ofSize: 10)
         hint.textColor = .secondaryLabelColor
         hint.frame = NSRect(x: pad, y: height - 48, width: width - 2 * pad, height: 14)
@@ -204,6 +224,7 @@ final class AppController: NSObject, NSApplicationDelegate {
             slider.target = t
             slider.action = #selector(ActionTarget.fire(_:))
             targets.append(t)
+            sliders[c.key] = slider
             panel.addSubview(slider)
         }
         return panel
