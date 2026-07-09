@@ -136,24 +136,16 @@ class SwirlSaverView: ScreenSaverView {
         static let grain = "grain"
     }
 
-    static var saverDefaults: ScreenSaverDefaults? {
-        // Constant module name (NOT the bundle id): the companion SwirlLive app
-        // compiles this class in too, where the bundle id would be the app's —
-        // a fixed name guarantees both processes share the same settings suite.
-        let module = "com.bartbak.SwirlSaver"
-        let d = ScreenSaverDefaults(forModuleWithName: module)
-        d?.register(defaults: [
-            Key.speed: 1.2, Key.density: 1.4, Key.saturation: 0.0,
-            Key.brightness: 1.75, Key.chroma: 0.009, Key.glassBend: 0.035,
-            Key.ripple: 0.2425, Key.waveSize: 1.80, Key.grain: 0.04,
-        ])
-        return d
-    }
+    // Shared JSON-file store (see SwirlSettings). Both the saver and the
+    // companion app read/write this same real-path file; ScreenSaverDefaults is
+    // unusable across the saver's sandbox boundary.
+    static var settings: SwirlSettings { SwirlSettings.shared }
 
     // The Options sheet only exposes Speed + Detail, but every parameter is read
     // here so the companion app can drive the rest.
     private func applySettings(to renderer: SwirlRenderer) {
-        guard let d = Self.saverDefaults else { return }
+        let d = Self.settings
+        d.load()   // pick up whatever the companion app most recently wrote
         renderer.speed = d.float(forKey: Key.speed)
         renderer.density = d.float(forKey: Key.density)
         renderer.saturation = d.float(forKey: Key.saturation)
@@ -181,7 +173,8 @@ class SwirlSaverView: ScreenSaverView {
         window.isReleasedWhenClosed = false
 
         let content = NSView(frame: NSRect(x: 0, y: 0, width: 400, height: 190))
-        let d = Self.saverDefaults
+        let d = Self.settings
+        d.load()
 
         func addRow(_ title: String, y: CGFloat, min: Double, max: Double, value: Double) -> NSSlider {
             let label = NSTextField(labelWithString: title)
@@ -193,8 +186,8 @@ class SwirlSaverView: ScreenSaverView {
             return slider
         }
 
-        speedSlider   = addRow("Speed",  y: 134, min: 0.0, max: 3.0, value: Double(d?.float(forKey: Key.speed) ?? 1.2))
-        densitySlider = addRow("Detail", y: 78,  min: 0.25, max: 3.0, value: Double(d?.float(forKey: Key.density) ?? 1.4))
+        speedSlider   = addRow("Speed",  y: 134, min: 0.0, max: 3.0, value: Double(d.float(forKey: Key.speed)))
+        densitySlider = addRow("Detail", y: 78,  min: 0.25, max: 3.0, value: Double(d.float(forKey: Key.density)))
 
         let cancel = NSButton(title: "Cancel", target: self, action: #selector(cancelConfig))
         cancel.bezelStyle = .rounded; cancel.keyEquivalent = "\u{1b}"
@@ -212,11 +205,10 @@ class SwirlSaverView: ScreenSaverView {
     }
 
     @objc private func saveConfig() {
-        if let d = Self.saverDefaults {
-            if let s = speedSlider { d.set(Float(s.doubleValue), forKey: Key.speed) }
-            if let s = densitySlider { d.set(Float(s.doubleValue), forKey: Key.density) }
-            d.synchronize()
-        }
+        let d = Self.settings
+        if let s = speedSlider { d.set(Float(s.doubleValue), forKey: Key.speed) }
+        if let s = densitySlider { d.set(Float(s.doubleValue), forKey: Key.density) }
+        d.synchronize()
         if let renderer { applySettings(to: renderer) }
         dismissConfig()
     }

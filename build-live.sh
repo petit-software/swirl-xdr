@@ -29,8 +29,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>CFBundleName</key><string>SwirlLive</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleIconFile</key><string>SwirlLive</string>
-    <key>CFBundleShortVersionString</key><string>1.0.1</string>
-    <key>CFBundleVersion</key><string>1.0.1</string>
+    <key>CFBundleShortVersionString</key><string>1.1</string>
+    <key>CFBundleVersion</key><string>1.1</string>
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSPrincipalClass</key><string>NSApplication</string>
@@ -43,6 +43,7 @@ swiftc -O \
     "$DIR/SwirlLive/main.swift" \
     "$DIR/SwirlXDR/SwirlRenderer.swift" \
     "$DIR/SwirlXDR/SwirlSaverView.swift" \
+    "$DIR/SwirlXDR/SwirlSettings.swift" \
     -framework AppKit -framework MetalKit -framework Metal -framework ScreenSaver \
     -o "$APP/Contents/MacOS/SwirlLive"
 

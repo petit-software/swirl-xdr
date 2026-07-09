@@ -34,7 +34,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     var sliders: [String: NSSlider] = [:]     // by settings key, for re-sync
     var panel: NSView?                        // control panel, toggled with H
     var titleLabel: NSTextField?              // for transient status messages
-    let defaults = SwirlSaverView.saverDefaults
+    let defaults = SwirlSettings.shared
 
     struct Ctl {
         let name: String, key: String
@@ -96,6 +96,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         NotificationCenter.default.addObserver(
             forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
         ) { [weak self] _ in
+            self?.defaults.load()   // pick up tuning done in the saver's Options sheet
             self?.applyStoredToRenderer()
             self?.syncSlidersFromDefaults()
         }
@@ -153,14 +154,14 @@ final class AppController: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
     private func syncSlidersFromDefaults() {
-        guard let d = defaults else { return }
+        let d = defaults
         for c in controls {
             sliders[c.key]?.doubleValue = Double(d.float(forKey: c.key))
         }
     }
 
     private func applyStoredToRenderer() {
-        guard let d = defaults else { return }
+        let d = defaults
         renderer.speed = d.float(forKey: SwirlSaverView.Key.speed)
         renderer.density = d.float(forKey: SwirlSaverView.Key.density)
         renderer.saturation = d.float(forKey: SwirlSaverView.Key.saturation)
@@ -209,7 +210,7 @@ final class AppController: NSObject, NSApplicationDelegate {
             label.frame = NSRect(x: pad, y: y + 20, width: width - 2 * pad, height: 15)
             panel.addSubview(label)
 
-            let value = Float(d?.float(forKey: c.key) ?? 0)
+            let value = Float(d.float(forKey: c.key))
             let slider = NSSlider(value: Double(value), minValue: c.min, maxValue: c.max,
                                   target: nil, action: nil)
             slider.frame = NSRect(x: pad, y: y, width: width - 2 * pad, height: 20)
@@ -218,8 +219,8 @@ final class AppController: NSObject, NSApplicationDelegate {
             let t = ActionTarget { [weak self] v in
                 guard let self = self else { return }
                 c.set(self.renderer, Float(v))
-                self.defaults?.set(Float(v), forKey: c.key)
-                self.defaults?.synchronize()
+                self.defaults.set(Float(v), forKey: c.key)
+                self.defaults.synchronize()
             }
             slider.target = t
             slider.action = #selector(ActionTarget.fire(_:))
